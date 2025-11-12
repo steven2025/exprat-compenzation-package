@@ -7,6 +7,34 @@
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+  <script>
+    if (window.Chart && window.ChartDataLabels) {
+      Chart.register(window.ChartDataLabels);
+      Chart.defaults.plugins = Chart.defaults.plugins || {};
+      Chart.defaults.plugins.datalabels = {
+        color: "#e5e7eb",
+        font: { size: 11, weight: "600" },
+        anchor: "end",
+        align: "end",
+        offset: 8,
+        clamp: true,
+        formatter: (value, ctx) => {
+          try {
+            const arr = ctx.chart?.data?.datasets?.[0]?.data || [];
+            const total = arr.reduce((a, b) => a + b, 0) || 1;
+            const pct = (value / total) * 100;
+            return value > 0 ? pct.toFixed(1) + "%" : "";
+          } catch (e) {
+            return "";
+          }
+        },
+        display: (ctx) => {
+          const val = ctx?.dataset?.data?.[ctx.dataIndex] ?? 0;
+          return val > 0;
+        }
+      };
+    }
+  </script>
   <style>
     :root {
       --bg-main: #020617;
@@ -1014,6 +1042,18 @@
                     <option value="100">100%</option>
                   </select>
                 </div>
+
+    <div class="form-row">
+      <label>
+        <span class="label-main">Crime Index（派出城市 / 目的地城市）</span>
+      </label>
+      <div class="grid grid-cols-2 gap-2">
+        <input id="crimeHome" type="number" step="0.1" min="0" max="100" class="input" placeholder="派出城市，如 30">
+        <input id="crimeHost" type="number" step="0.1" min="0" max="100" class="input" placeholder="目的地城市，如 55">
+      </div>
+      <div class="hint">说明：仅补“向上差值”（目的地高于派出地），按 ΔCrime 分档 0/5/10/15/20/25%。</div>
+    </div>
+    
               </div>
             </div>
           </section>
@@ -1111,30 +1151,6 @@
   </div>
 
   <script>
-    // Register Chart.js datalabels plugin and set global defaults for percentage labels inside pie slices
-    if (window.Chart && window.ChartDataLabels) {
-      Chart.register(window.ChartDataLabels);
-      Chart.defaults.plugins = Chart.defaults.plugins || {};
-      Chart.defaults.plugins.datalabels = {
-        color: "#ffffff",
-        font: { size: 11, weight: "600" },
-        formatter: (value, ctx) => {
-          try {
-            const arr = ctx.chart?.data?.datasets?.[0]?.data || [];
-            const total = arr.reduce((a, b) => a + b, 0) || 1;
-            const pct = (value / total) * 100;
-            return value > 0 ? pct.toFixed(1) + "%" : "";
-          } catch (e) {
-            return "";
-          }
-        },
-        display: (ctx) => {
-          const val = ctx?.dataset?.data?.[ctx.dataIndex] ?? 0;
-          return val > 0; // hide zero slices
-        }
-      };
-    }
-
     // =========================
     // Multi-language dictionary
     // =========================
@@ -2179,7 +2195,8 @@
       const domOtherBenefits = valNum("domOtherBenefits");
 
       const domSalesCommission =
-        domCollSales * domCollRate + domUncollSales * domUncollRate;
+        (Number.isFinite(domCollSales) ? domCollSales : 0) * (Number.isFinite(domCollRate) ? domCollRate : 0)
+      + (Number.isFinite(domUncollSales) ? domUncollSales : 0) * (Number.isFinite(domUncollRate) ? domUncollRate : 0);
 
       const domFixedMonthly = domBaseSalary + domFixedAllow;
       const domVariableMonthly = domSalesCommission + domOtherVar;
@@ -2212,7 +2229,8 @@
       const hostUncollRate = valNum("hostUncollRate") / 100;
 
       const hostSalesCommission =
-        hostCollSales * hostCollRate + hostUncollSales * hostUncollRate;
+        (Number.isFinite(hostCollSales) ? hostCollSales : 0) * (Number.isFinite(hostCollRate) ? hostCollRate : 0)
+      + (Number.isFinite(hostUncollSales) ? hostUncollSales : 0) * (Number.isFinite(hostUncollRate) ? hostUncollRate : 0);
 
       // Allowance percentages
       const colaPct = valNum("colaPct") / 100;
@@ -2259,10 +2277,20 @@
       }
 
       // Hardship: simplified as 10% of domestic total times hardshipPct
-      const hardshipMonthly = domMonthlyTotal * 0.1 * hardshipPct;
-
-      // Assume other benefits are still paid while on assignment
-      const hostOtherBenefitsMonthly = domOtherBenefits;
+      // === Hardship allowance (Scheme B: relative Crime Index) ===
+      const crimeHome = parseFloat(document.getElementById("crimeHome")?.value || "");
+      const crimeHost = parseFloat(document.getElementById("crimeHost")?.value || "");
+      const ciHome = Number.isFinite(crimeHome) ? crimeHome : 0;
+      const ciHost = Number.isFinite(crimeHost) ? crimeHost : 0;
+      const deltaCrime = Math.max(0, ciHost - ciHome);
+      let computedHardshipPct = 0;
+      if (deltaCrime >= 40) computedHardshipPct = 0.25;
+      else if (deltaCrime >= 30) computedHardshipPct = 0.20;
+      else if (deltaCrime >= 20) computedHardshipPct = 0.15;
+      else if (deltaCrime >= 10) computedHardshipPct = 0.10;
+      else if (deltaCrime >= 5) computedHardshipPct = 0.05;
+      else computedHardshipPct = 0.0;
+      const hardshipMonthly = domMonthlyTotal * computedHardshipPct;
 
       // Host fixed pay
       const hostFixedMonthly = domFixedMonthly * hostAdjFactor;
@@ -2276,6 +2304,7 @@
         educationMonthly +
         hardshipMonthly;
 
+      const hostOtherBenefitsMonthly = domOtherBenefits;
       const hostMonthlyTotal =
         hostFixedMonthly + hostSalesCommission + hostExpatMonthly + hostOtherBenefitsMonthly;
 
@@ -2303,6 +2332,7 @@
         mealMonthly,
         educationMonthly,
         hardshipMonthly,
+        computedHardshipPct,
         hostOtherBenefitsMonthly,
         homeAnnual,
         hostAnnual
@@ -2381,14 +2411,7 @@
           ]
         },
         options: {
-          plugins: {
-            legend: {
-              labels: {
-                color: "#e5e7eb",
-                font: { size: 11 }
-              }
-            }
-          }
+          plugins: { legend: { labels: { color: "#e5e7eb", font: { size: 11 } } }, datalabels: { anchor: "end", align: "end", offset: 8, clamp: true } }
         }
       });
 
@@ -2409,14 +2432,7 @@
           ]
         },
         options: {
-          plugins: {
-            legend: {
-              labels: {
-                color: "#e5e7eb",
-                font: { size: 11 }
-              }
-            }
-          }
+          plugins: { legend: { labels: { color: "#e5e7eb", font: { size: 11 } } }, datalabels: { anchor: "end", align: "end", offset: 8, clamp: true } }
         }
       });
     }
@@ -2525,11 +2541,6 @@
         (dict.chartLabelExpat || "Expat allowances") +
           " ≈ " +
           (data.hostExpatMonthly * 12).toFixed(2)
-      );
-      lines.push(
-        (dict.chartLabelBenefits || "Benefits") +
-          " ≈ " +
-          (data.hostOtherBenefitsMonthly * 12).toFixed(2)
       );
       lines.push("");
 
